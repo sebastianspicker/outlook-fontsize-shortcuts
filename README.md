@@ -1,6 +1,20 @@
 # outlook-fontsize-shortcuts
 
+
 Keyboard shortcuts for changing text display size in Outlook for Mac, with support for both New and Legacy Outlook via Hammerspoon.
+
+<details>
+<summary>Status and limitations</summary>
+
+**Project status: archived independent automation project.** I developed this
+Hammerspoon configuration independently alongside my main professional work. The
+repository is no longer actively maintained and remains available as a starting point
+to adapt, rather than a ready-to-use, supported Outlook product. Outlook's interface,
+localization and macOS permissions can change. Review the configuration and test
+shortcuts and settings on your own system before relying on them; responsibility for
+any adaptation and use remains with you.
+
+</details>
 
 | Shortcut | Action |
 |----------|--------|
@@ -9,6 +23,15 @@ Keyboard shortcuts for changing text display size in Outlook for Mac, with suppo
 | `Ctrl+Alt+Cmd+T` | Toggle between increase and decrease |
 
 Use it to avoid digging through Outlook settings every time you want larger or smaller interface text.
+
+## How it works
+
+```mermaid
+flowchart LR
+    Key[Keyboard shortcut] --> HS[Hammerspoon module]
+    HS --> UI[Outlook settings or preferences]
+    UI --> Size[Existing text display-size control]
+```
 
 ## Supported Outlook modes
 
@@ -34,7 +57,7 @@ brew install hammerspoon
 ## Install
 
 ```bash
-git clone https://github.com/<owner>/outlook-fontsize-shortcuts.git
+git clone https://github.com/sebastianspicker/outlook-fontsize-shortcuts.git
 cd outlook-fontsize-shortcuts
 cp init.lua outlook-font.lua ~/.hammerspoon/
 cp -R outlook_font ~/.hammerspoon/
