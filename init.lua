@@ -20,57 +20,35 @@ hs.application.enableSpotlightForNameSearches(true)
 local of = require("outlook-font")
 
 --------------------------------------------------------------------------------
--- 3) Notification helper (auto-dismiss after 3 seconds)
---------------------------------------------------------------------------------
-local function notify(text)
-    local msg = (text ~= nil and tostring(text)) or ""
-    hs.notify
-        .new({
-            title = "Outlook Font",
-            informativeText = msg,
-            autoWithdraw = true,
-            withdrawAfter = 3,
-        })
-        :send()
-end
-
-local function notifyOnSuccess(msg)
-    return function(ok)
-        if ok then
-            notify(msg)
-        end
-    end
-end
-
---------------------------------------------------------------------------------
--- 4) Load config and bind hotkeys
---    Default shortcuts (override in ~/.hammerspoon/outlook-font.json):
+-- 3) Load config and bind hotkeys
+--    Default shortcuts (override in outlook-font.json next to this file):
 --      Ctrl+Alt+Cmd+G  ->  Increase text size
 --      Ctrl+Alt+Cmd+K  ->  Decrease text size
 --      Ctrl+Alt+Cmd+T  ->  Toggle (alternates increase/decrease)
+--    `report` shows a notification after a successful change (hotkeys and menu).
 --------------------------------------------------------------------------------
+local messages = { increase = "Text size increased", decrease = "Text size decreased" }
+local function report(ok, direction)
+    if not ok then
+        return
+    end
+    if direction == "toggle" then
+        direction = of.toggleState and "increase" or "decrease"
+    end
+    of.notify("Outlook Font", messages[direction])
+end
+
 of.loadConfig()
 local hotkeyMapping = {
     increase = of.cfg.hotkeys.increase,
     decrease = of.cfg.hotkeys.decrease,
     toggle = of.cfg.hotkeys.toggle,
 }
-hotkeyMapping.onComplete = function(ok, direction)
-    if not ok then
-        return
-    end
-    if direction == "increase" then
-        notify("Text size increased")
-    elseif direction == "decrease" then
-        notify("Text size decreased")
-    elseif direction == "toggle" then
-        notify(of.toggleState and "Text size increased" or "Text size decreased")
-    end
-end
+hotkeyMapping.onComplete = report
 of.bindHotkeys(hotkeyMapping)
 
 --------------------------------------------------------------------------------
--- 5) Build the menubar dropdown
+-- 4) Build the menubar dropdown
 --    Shortcut hints are shown next to each item for discoverability.
 --------------------------------------------------------------------------------
 local function shortcutLabel(binding)
@@ -90,22 +68,24 @@ local menuItems = {
     {
         title = "Larger Text Size" .. shortcutLabel(of.cfg.hotkeys.increase),
         fn = function()
-            of.adjustTextSize(true, notifyOnSuccess("Text size increased"))
+            of.adjustTextSize(true, function(ok)
+                report(ok, "increase")
+            end)
         end,
     },
     {
         title = "Smaller Text Size" .. shortcutLabel(of.cfg.hotkeys.decrease),
         fn = function()
-            of.adjustTextSize(false, notifyOnSuccess("Text size decreased"))
+            of.adjustTextSize(false, function(ok)
+                report(ok, "decrease")
+            end)
         end,
     },
     {
         title = "Toggle Text Size" .. shortcutLabel(of.cfg.hotkeys.toggle),
         fn = function()
             of.toggleTextSize(function(ok)
-                if ok then
-                    notify(of.toggleState and "Text size increased" or "Text size decreased")
-                end
+                report(ok, "toggle")
             end)
         end,
     },
@@ -119,7 +99,7 @@ local menuItems = {
 }
 
 --------------------------------------------------------------------------------
--- 6) Create the menubar icon. It must live in a global: Hammerspoon removes a
+-- 5) Create the menubar icon. It must live in a global: Hammerspoon removes a
 --    menubar item once its object is garbage-collected, and locals of this file
 --    go out of scope when it finishes loading.
 --------------------------------------------------------------------------------
@@ -129,5 +109,5 @@ if outlookFontMenu then
     outlookFontMenu:setTooltip("Outlook Font Size Shortcuts")
     outlookFontMenu:setMenu(menuItems)
 else
-    notify("Could not create menubar item. Check the Hammerspoon console for errors.")
+    of.notify("Outlook Font", "Could not create menubar item. Check the Hammerspoon console for errors.")
 end

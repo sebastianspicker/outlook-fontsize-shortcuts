@@ -3,10 +3,8 @@ local M = {}
 local DEFAULT_DURATION = 1.2
 
 -- Creates a feedback object (notifications and a debounced overlay).
--- deps may hold any of: notify, canvas, screen, timer (hs modules, each possibly nil).
+-- deps holds the hs modules notify, canvas, screen and timer.
 function M.new(deps)
-    deps = deps or {}
-
     -- Single overlay instance for debounce (reuse one canvas, reset timer on rapid calls)
     local canvas_ref = nil
     local timer_ref = nil
@@ -29,30 +27,20 @@ function M.new(deps)
     function fb.notify(title, message)
         local t = (title ~= nil and tostring(title)) or ""
         local m = (message ~= nil and tostring(message)) or ""
-        if deps.notify and deps.notify.new then
-            deps.notify
-                .new({
-                    title = t,
-                    informativeText = m,
-                    autoWithdraw = true,
-                    withdrawAfter = 3,
-                })
-                :send()
-            return
-        end
-
-        if io and io.stderr then
-            io.stderr:write(string.format("%s: %s\n", t, m))
-        end
+        deps.notify
+            .new({
+                title = t,
+                informativeText = m,
+                autoWithdraw = true,
+                withdrawAfter = 3,
+            })
+            :send()
     end
 
     -- Shows a brief overlay; debounced (single canvas, timer reset on rapid calls).
     function fb.overlay(text, duration)
         if type(text) ~= "string" then
             text = ""
-        end
-        if not (deps.canvas and deps.screen and deps.timer) then
-            return
         end
 
         -- Debounce: cancel previous timer and remove previous canvas

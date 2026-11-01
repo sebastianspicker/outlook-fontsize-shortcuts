@@ -3,11 +3,6 @@
   // Keys you leave out keep their built-in defaults (outlook_font/config.lua),
   // including the localized Outlook labels and menu paths; see README "Configuration".
 
-  // "auto"   = try New Outlook (Settings…) first, then Legacy Outlook (Preferences…)
-  // "new"    = force New Outlook only
-  // "legacy" = force Legacy Outlook only
-  "mode": "auto",
-
   // Timing for UI automation (seconds)
   "delays": {
     // Wait after bringing Outlook to the front
