@@ -3,6 +3,8 @@
 
 Keyboard shortcuts for changing text display size in Outlook for Mac, with support for both New and Legacy Outlook via Hammerspoon.
 
+> _Claude was used to polish and proof-read the code and documentation of this repository._
+
 <details>
 <summary>Status and limitations</summary>
 
@@ -26,12 +28,55 @@ Use it to avoid digging through Outlook settings every time you want larger or s
 
 ## How it works
 
+Everything runs inside the Hammerspoon process; there is no server or daemon. A shortcut opens Outlook's own settings window, moves its text-size control one step through the macOS Accessibility API, and closes the window again.
+
+Which parts are involved, and how do they reach Outlook?
+
 ```mermaid
 flowchart LR
-    Key[Keyboard shortcut] --> HS[Hammerspoon module]
-    HS --> UI[Outlook settings or preferences]
-    UI --> Size[Existing text display-size control]
+    user((User))
+    subgraph hs [Hammerspoon process]
+        init["init.lua"]
+        api["outlook-font.lua"]
+        cfg["config.lua"]
+        olk["outlook.lua"]
+        axm["ax.lua"]
+        fb["feedback.lua"]
+    end
+    json[("outlook-font.json")]
+    subgraph app [Outlook for Mac]
+        settings["Settings window"]
+    end
+    user -->|hotkey| api
+    user -->|menubar click| init
+    init -->|"adjustTextSize()"| api
+    api -->|"load()"| cfg
+    cfg -->|read at startup| json
+    api -->|"attempt()"| olk
+    olk -->|"menu item or ⌘,"| settings
+    olk -->|find elements| axm
+    axm -->|read AX tree| settings
+    olk -->|"AXPress / set AXValue"| settings
+    api -.->|overlay, notification| fb
+    classDef focus fill:#fde68a,stroke:#b45309,color:#1f2937
+    class olk focus
 ```
+
+`init.lua` is the user's Hammerspoon config: it loads the module, binds the hotkeys through `bindHotkeys()` and builds the menubar item. `outlook-font.lua` owns the policy: one change at a time (busy guard), activating Outlook, retries and the toggle direction. `outlook.lua` does one attempt against Outlook's UI, using the tree searches in `ax.lua`; it decides New vs Legacy Outlook from which menu entry opened the settings window. Nothing is stored between runs except what is in `outlook-font.json`; the toggle direction lives in memory until Hammerspoon reloads.
+
+The step-by-step flow of a single shortcut, including retries and size limits, is in [docs/modes.md](docs/modes.md).
+
+### Code map
+
+| Path | Responsibility |
+|------|----------------|
+| [`init.lua`](init.lua) | Example `~/.hammerspoon/init.lua`: loads config, binds hotkeys, menubar item, success notification |
+| [`outlook-font.lua`](outlook-font.lua) | Public API (`adjustTextSize`, `toggleTextSize`, `bindHotkeys`, `loadConfig`), busy guard, retries, toggle state |
+| [`outlook_font/outlook.lua`](outlook_font/outlook.lua) | One attempt: find Outlook, open settings, detect New/Legacy, press button or move slider, close window |
+| [`outlook_font/ax.lua`](outlook_font/ax.lua) | Depth-first searches over the Accessibility tree (by role, by text, button groups) |
+| [`outlook_font/config.lua`](outlook_font/config.lua) | Built-in defaults, JSON-with-comments parsing, validation of `outlook-font.json` |
+| [`outlook_font/feedback.lua`](outlook_font/feedback.lua) | Notifications and the debounced on-screen overlay |
+| [`test/attempt_test.lua`](test/attempt_test.lua) | Plain-Lua tests with fake Hammerspoon and Accessibility objects |
 
 ## Supported Outlook versions
 

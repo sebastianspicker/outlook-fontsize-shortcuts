@@ -12,6 +12,39 @@ The way the settings window was opened decides which version is handled:
 
 ## What happens on each shortcut
 
+What happens between pressing `Ctrl+Alt+Cmd+G` and the overlay appearing?
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant api as outlook-font.lua
+    participant olk as outlook.lua
+    participant app as Outlook
+    participant fb as feedback.lua
+    U->>api: Ctrl+Alt+Cmd+G
+    api->>app: activate()
+    api->>olk: attempt(isPlus) after delays.activate
+    olk->>app: Settings… / Preferences… / ⌘,
+    loop every delays.waitInterval
+        olk->>app: read AXWindows
+    end
+    alt Legacy Outlook
+        olk->>app: set slider AXValue ±1
+    else New Outlook
+        olk->>app: AXPress General tile
+        olk->>app: AXPress larger/smaller button
+    end
+    olk->>app: AXPress close button
+    olk-->>api: cb(ok, err, retryable, at_limit)
+    opt retryable failure
+        api->>olk: attempt again after retry.interval
+    end
+    api-)fb: overlay and notification
+```
+
+Steps 2–3 run in [`outlook-font.lua`](../outlook-font.lua) (`adjustTextSize` → `start_change`); a second shortcut pressed while one is running is ignored. Steps 4–10 are `attempt` in [`outlook_font/outlook.lua`](../outlook_font/outlook.lua): the polling loop (5) waits for a new window that looks like Settings, and the branch (6–8) is `legacy_step` or `new_outlook_step` + `press_size_button`. The callback (10) carries whether a retry is safe; step 11 only happens on retryable failures. On success the overlay comes from `feedback.lua` and the notification from the `report` callback in [`init.lua`](../init.lua). The numbered list below spells out each rule.
+
 1. Settings are opened with the `settingsMenu` entry, then the `preferencesMenu` entry. If neither exists (for example in a translated menu), `⌘,` is sent, which opens an app's settings in every language.
 2. Only a window that appears after that is used, and only if it looks like Settings (slider, settings header or text-size label). If Settings is already open, close it first; otherwise the attempt times out.
 3. In New Outlook, the `General` tile is found next to the settings header, or by its label (`generalLabels`). If neither can be pressed and the text-size controls are not already visible, the attempt fails.
