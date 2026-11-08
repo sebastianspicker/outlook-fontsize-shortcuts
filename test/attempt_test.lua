@@ -531,6 +531,63 @@ function tests.loadconfig_reads_from_hs_configdir()
     assert(opened == "/fake/hs/outlook-font.json", "opened " .. tostring(opened))
 end
 
+-- Hammerspoon stops a timer when its userdata is garbage-collected, so a pending doAfter must stay referenced.
+function tests.pending_timer_survives_garbage_collection()
+    local of, hs = load_of()
+    with_open(function()
+        return nil
+    end, of.loadConfig)
+    local collected = false
+    hs.timer.doAfter = function()
+        return setmetatable({}, {
+            __gc = function()
+                collected = true
+            end,
+        })
+    end
+    assert(of.adjustTextSize(true, function() end))
+    collectgarbage()
+    collectgarbage()
+    assert(not collected, "pending doAfter timer was garbage-collected")
+end
+
+function tests.retryable_failure_retries_then_succeeds()
+    local slider = make_slider(nil) -- no AXValue on the first attempt: a retryable error
+    local set_to
+    slider.onSet = function(_, v)
+        set_to = v
+        return slider
+    end
+    local menus = 0
+    local of, hs = load_of({
+        on_menu = function(axapp, path)
+            if path[#path] ~= "Preferences…" then
+                return false
+            end
+            menus = menus + 1
+            if menus == 2 then
+                slider.attrs.AXValue = 1
+            end
+            axapp.attrs.AXWindows = { slider_window(slider) }
+            return true
+        end,
+    })
+    with_open(function()
+        return nil
+    end, of.loadConfig)
+    of.cfg.showOverlay = false
+
+    local calls, result = 0, nil
+    assert(of.adjustTextSize(true, function(ok)
+        calls = calls + 1
+        result = ok
+    end))
+    assert(menus == 2, "expected one retry, menus opened " .. menus)
+    assert(calls == 1 and result == true, "callback calls " .. calls .. ", result " .. tostring(result))
+    assert(set_to == 2 and #hs.notifications == 0, table.concat(hs.notifications, "|"))
+    assert(of.adjustTextSize(true, function() end), "busy must be cleared after the retry succeeded")
+end
+
 function tests.toggle_at_limit_flips_direction()
     local slider = make_slider(2)
     local set_to

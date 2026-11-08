@@ -36,6 +36,8 @@ local deps = {
 local fb = feedback.new(deps)
 local config_loaded = false
 local busy = false
+-- Hammerspoon stops a timer whose userdata is garbage-collected, so the pending one stays referenced.
+local pending = {}
 
 local function notify(title, message)
     fb.notify(title, message)
@@ -116,7 +118,7 @@ local function start_change(isPlus, callback)
             elseif retryable and attempt <= M.cfg.retry.attempts then
                 -- shortcut: assumes the window closed by the failed attempt is gone after retry.interval;
                 -- if retries end in "Timed out", wait for it to disappear before retrying.
-                deps.timer.doAfter(M.cfg.retry.interval, function()
+                pending.timer = deps.timer.doAfter(M.cfg.retry.interval, function()
                     run_attempt(attempt + 1)
                 end)
             elseif at_limit then
@@ -136,7 +138,7 @@ local function start_change(isPlus, callback)
     end
 
     app:activate()
-    deps.timer.doAfter(M.cfg.delays.activate, function()
+    pending.timer = deps.timer.doAfter(M.cfg.delays.activate, function()
         run_attempt(1)
     end)
     return true

@@ -284,9 +284,7 @@ function M.defaults()
     return deep_copy(default_cfg)
 end
 
-function M.sanitize(ext)
-    return sanitize_config(ext)
-end
+M.sanitize = sanitize_config
 
 -- opts = { path = string (required), decode = function(raw) -> value (may throw) | nil }
 -- Returns cfg_or_nil, problems where problems = { { title = ..., message = ... }, ... }.

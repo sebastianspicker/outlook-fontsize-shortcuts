@@ -23,41 +23,6 @@ local function children_of(node)
     return get_attribute(node, "AXChildren") or {}
 end
 
-function M.find_first_by_role(root, role)
-    if not root then
-        return nil
-    end
-    if get_attribute(root, "AXRole") == role then
-        return root
-    end
-    for _, child in ipairs(children_of(root)) do
-        local found = M.find_first_by_role(child, role)
-        if found then
-            return found
-        end
-    end
-    return nil
-end
-
-function M.find_static_text(root, substring)
-    if not root or type(substring) ~= "string" then
-        return nil
-    end
-    if get_attribute(root, "AXRole") == "AXStaticText" then
-        local value = get_attribute(root, "AXValue") or get_attribute(root, "AXTitle") or ""
-        if string.find(value, substring, 1, true) then
-            return root
-        end
-    end
-    for _, child in ipairs(children_of(root)) do
-        local found = M.find_static_text(child, substring)
-        if found then
-            return found
-        end
-    end
-    return nil
-end
-
 local function contains_any(text, substrings)
     for _, substring in ipairs(substrings) do
         if type(substring) == "string" and string.find(text, substring, 1, true) then
@@ -91,6 +56,14 @@ function M.find_role_or_static_text(root, role, substrings)
         end
     end
     return nil
+end
+
+function M.find_first_by_role(root, role)
+    return M.find_role_or_static_text(root, role, nil)
+end
+
+function M.find_static_text(root, substring)
+    return M.find_role_or_static_text(root, nil, { substring })
 end
 
 function M.find_ancestor_by_role(node, role)
