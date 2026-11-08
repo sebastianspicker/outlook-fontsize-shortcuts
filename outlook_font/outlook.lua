@@ -91,8 +91,8 @@ local function looks_like_settings(win, cfg)
     return ax.find_role_or_static_text(win, "AXSlider", labels) ~= nil
 end
 
--- hs.axuielement's performAction returns the element if the action was accepted,
--- false if it was rejected, and nil + error on an accessibility error.
+-- hs.axuielement's performAction returns the element on success, false on
+-- kAXErrorCannotComplete (which includes timeouts), and nil + error otherwise.
 local function press(elem)
     if not elem then
         return false
@@ -240,17 +240,13 @@ function M.attempt(deps, cfg, app, isPlus, cb)
             fail(isPlus and MSG_AT_MAX or MSG_AT_MIN, false, true)
             return
         end
+        -- Once pressed, never retry: false (kAXErrorCannotComplete, e.g. a timeout) or an error
+        -- does not prove the press failed, and a retry could change the size twice.
+        mutated = true
         local ok, result = pcall(function()
             return btn:performAction("AXPress")
         end)
-        if ok and result == false then
-            -- Rejected: the size did not change, so a retry is safe.
-            error(MSG_BUTTON_PRESS, 0)
-        end
-        -- Accepted, or an accessibility error after which the press may still have
-        -- landed: never retry from here on.
-        mutated = true
-        if not ok or result == nil then
+        if not ok or not result then
             error(MSG_BUTTON_PRESS, 0)
         end
         succeed()

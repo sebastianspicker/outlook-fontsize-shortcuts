@@ -37,7 +37,7 @@ local fb = feedback.new(deps)
 local config_loaded = false
 local busy = false
 -- Hammerspoon stops a timer whose userdata is garbage-collected, so the pending one stays referenced.
-local pending = {}
+local pending = {} -- luacheck: ignore 241 (written only to hold the reference)
 
 local function notify(title, message)
     fb.notify(title, message)

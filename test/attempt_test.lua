@@ -150,7 +150,9 @@ function tests.button_ax_error_is_not_retryable()
     assert(not r.retry, "AX error must not be retryable")
 end
 
-function tests.button_rejected_is_retryable()
+-- hs.axuielement returns false for kAXErrorCannotComplete, which includes a timeout after which
+-- the press may still land; retrying could change the size twice.
+function tests.button_cannot_complete_is_not_retryable()
     local smaller = el({ AXRole = "AXButton", AXTitle = "Smaller" })
     local larger = el({ AXRole = "AXButton", AXTitle = "Larger" })
     larger.onPress = function()
@@ -159,7 +161,7 @@ function tests.button_rejected_is_retryable()
     local deps, cfg, app = setup(new_window(smaller, larger))
     local r = run(deps, cfg, app, true)
     assert(r.ok == false, "expected failure")
-    assert(r.retry == true, "rejected press must be retryable")
+    assert(not r.retry, "a press that could not complete must not be retried")
 end
 
 function tests.legacy_slider_increase()
