@@ -27,7 +27,6 @@ Legacy-only config:
 
 Current config:
 
-- `mode = "legacy"` if you want to force Legacy Outlook
 - `delays.timeout`, `delays.waitInterval`, `delays.activate`
 - `retry.attempts`, `retry.interval`
 - `hotkeys.increase`, `hotkeys.decrease`, `hotkeys.toggle`
@@ -36,13 +35,12 @@ Current config:
 
 - You no longer need `right_arrow_count`. The current runtime finds the legacy slider directly through Accessibility APIs instead of navigating tabs with arrow keys.
 - You no longer set slider positions directly. `increase` and `decrease` move one step at a time.
-- You can keep `mode = "auto"` if you switch between New Outlook and Legacy Outlook.
+- New and Legacy Outlook are detected automatically.
 
 ## Example `outlook-font.json`
 
 ```jsonc
 {
-  "mode": "legacy",
   "delays": {
     "timeout": 5
   },

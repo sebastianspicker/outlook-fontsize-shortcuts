@@ -17,23 +17,15 @@ local function is_array(t)
     return count == #t
 end
 
-local function deep_copy_impl(value, visited)
+local function deep_copy(value)
     if type(value) ~= "table" then
         return value
     end
-    if visited[value] then
-        return visited[value]
-    end
     local out = {}
-    visited[value] = out
     for k, v in pairs(value) do
-        out[deep_copy_impl(k, visited)] = deep_copy_impl(v, visited)
+        out[k] = deep_copy(v)
     end
     return out
-end
-
-local function deep_copy(value)
-    return deep_copy_impl(value, {})
 end
 
 local function deep_merge(dst, src)
@@ -71,7 +63,6 @@ local function strip_jsonc(raw)
     local len = #raw
 
     local in_string = false
-    local string_quote = nil -- Track which quote character started the string
     local escape = false
 
     local in_line_comment = false
@@ -107,18 +98,14 @@ local function strip_jsonc(raw)
                 escape = false
             elseif ch == "\\" then
                 escape = true
-            elseif ch == string_quote then
-                -- String ends with the same quote that started it
+            elseif ch == '"' then
                 in_string = false
-                string_quote = nil
             end
             i = i + 1
         else
             -- Not in string or comment
-            if ch == '"' or ch == "'" then
-                -- Start of a string; only double-quoted strings are valid in JSON
+            if ch == '"' then
                 in_string = true
-                string_quote = ch
                 table.insert(out, ch)
                 i = i + 1
             elseif ch == "/" and next_ch == "/" then
@@ -140,7 +127,6 @@ local function strip_jsonc(raw)
 end
 
 local default_cfg = {
-    mode = "auto",
     appNames = { "Outlook", "Microsoft Outlook" },
     settingsMenu = { "Outlook", "Settings…" },
     preferencesMenu = { "Outlook", "Preferences…" },
@@ -165,10 +151,6 @@ local default_cfg = {
         larger = "Larger",
         smaller = "Smaller",
     },
-    closeWindowKeystroke = {
-        mods = { "cmd" },
-        key = "w",
-    },
     delays = {
         activate = 0.1, -- seconds after app:activate()
         waitInterval = 0.05, -- polling interval
@@ -188,19 +170,11 @@ local default_cfg = {
 }
 
 local function is_string_array(value)
-    if type(value) ~= "table" then
+    if not is_array(value) or #value == 0 then
         return false
     end
-    if #value < 1 then
-        return false
-    end
-    for i = 1, #value do
-        if type(value[i]) ~= "string" then
-            return false
-        end
-    end
-    for k in pairs(value) do
-        if type(k) ~= "number" or k < 1 or k > #value then
+    for _, v in ipairs(value) do
+        if type(v) ~= "string" then
             return false
         end
     end
@@ -221,11 +195,6 @@ local function sanitize_config(ext)
 
     local function reset_top(key)
         merged[key] = deep_copy(default_cfg[key])
-    end
-
-    if merged.mode ~= nil and merged.mode ~= "auto" and merged.mode ~= "new" and merged.mode ~= "legacy" then
-        warn("mode", '"auto" | "new" | "legacy"')
-        merged.mode = default_cfg.mode
     end
 
     local function ensure_string_array(key)
@@ -261,14 +230,21 @@ local function sanitize_config(ext)
     ensure_string_array("labelTexts")
 
     ensure_table_with_fields("overlayText", { larger = "string", smaller = "string" })
-    ensure_table_with_fields("closeWindowKeystroke", { mods = "table", key = "string" })
-    -- closeWindowKeystroke.mods must be array of strings (for eventtap.keyStroke)
-    if merged.closeWindowKeystroke and not is_string_array(merged.closeWindowKeystroke.mods) then
-        warn("closeWindowKeystroke.mods", "string[]")
-        merged.closeWindowKeystroke.mods = deep_copy(default_cfg.closeWindowKeystroke.mods)
-    end
     ensure_table_with_fields("delays", { activate = "number", waitInterval = "number", timeout = "number" })
     ensure_table_with_fields("retry", { attempts = "number", interval = "number" })
+
+    if merged.delays.waitInterval <= 0 then
+        warn("delays.waitInterval", "number > 0")
+        merged.delays.waitInterval = default_cfg.delays.waitInterval
+    end
+    if merged.delays.timeout <= 0 then
+        warn("delays.timeout", "number > 0")
+        merged.delays.timeout = default_cfg.delays.timeout
+    end
+    if merged.retry.interval < 0 then
+        warn("retry.interval", "number >= 0")
+        merged.retry.interval = default_cfg.retry.interval
+    end
 
     if merged.overlayDuration ~= nil and type(merged.overlayDuration) ~= "number" then
         warn("overlayDuration", "number")
@@ -297,6 +273,7 @@ local function sanitize_config(ext)
         and merged.hotkeys.toggle ~= false
         and not valid_binding(merged.hotkeys.toggle)
     then
+        warn("hotkeys.toggle", "{ mods, key } or false")
         merged.hotkeys.toggle = deep_copy(default_cfg.hotkeys.toggle)
     end
 
@@ -307,39 +284,12 @@ function M.defaults()
     return deep_copy(default_cfg)
 end
 
-function M.sanitize(ext)
-    return sanitize_config(ext)
-end
+M.sanitize = sanitize_config
 
--- opts = { path = string|nil, home = string, decode = function(raw) -> value (may throw) | nil }
+-- opts = { path = string (required), decode = function(raw) -> value (may throw) | nil }
 -- Returns cfg_or_nil, problems where problems = { { title = ..., message = ... }, ... }.
 function M.load(opts)
-    opts = opts or {}
-    local home = opts.home or ""
-    local custom = opts.path
-    local cfg_path = custom or (home .. "/.hammerspoon/outlook-font.json")
-
-    -- Reject path traversal in any path
-    if cfg_path:match("%.%.") then
-        return nil, { { title = "Config Error", message = "Invalid config path: path traversal not allowed" } }
-    end
-
-    -- Expand leading ~ to HOME (io.open does not expand ~)
-    if cfg_path:sub(1, 1) == "~" then
-        local rest = (cfg_path:sub(2, 2) == "/" or cfg_path:sub(2, 2) == "") and cfg_path:sub(2)
-            or "/" .. cfg_path:sub(2)
-        cfg_path = home .. rest
-    end
-
-    -- When using a custom path, require absolute or ~ path
-    if custom and cfg_path:sub(1, 1) ~= "/" and home == "" then
-        return nil, { { title = "Config Error", message = "Config path must be absolute or use ~; HOME is not set" } }
-    end
-
-    -- Avoid reading from root if HOME is unset and default path was used
-    if not custom and home == "" then
-        return nil, { { title = "Config Warning", message = "HOME is not set; skipping config file load" } }
-    end
+    local cfg_path = opts.path
 
     local f = io.open(cfg_path, "r")
     if not f then
@@ -368,7 +318,7 @@ function M.load(opts)
         if ok then
             ext = value
         else
-            decode_err = "hs.json.decode failed"
+            decode_err = tostring(value)
         end
     end
 

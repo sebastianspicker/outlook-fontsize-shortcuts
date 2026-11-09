@@ -5,28 +5,20 @@ local M = {}
 local BUNDLE_ID = "com.microsoft.Outlook"
 
 local MSG_NO_AX = "Cannot access Outlook UI. Check Accessibility permissions and restart Hammerspoon."
-local MSG_MENU_AUTO = "Could not open Settings or Preferences menu. "
-    .. "Make sure Outlook is in the foreground and responsive."
-local MSG_MENU_NEW = "Could not open the Settings menu in forced new mode. "
-    .. "Switch to auto mode if Outlook is still using Preferences."
-local MSG_MENU_LEGACY = "Could not open the Preferences menu in forced legacy mode. "
-    .. "Switch to auto mode if Outlook is already using Settings."
-local MSG_WINDOW_TIMEOUT = "Timed out waiting for the settings window. "
-    .. "Try increasing delays.timeout in outlook-font.json."
+local MSG_WINDOW_TIMEOUT = "Timed out waiting for the settings window. If Outlook's Settings window is already open, "
+    .. "close it and try again; otherwise increase delays.timeout in outlook-font.json."
 local MSG_PANE_TIMEOUT = "Timed out waiting for the General pane. "
     .. "Try increasing delays.timeout in outlook-font.json."
 local MSG_NO_SLIDER = "Font size slider not found in Preferences. Outlook's UI may have changed."
 local MSG_SLIDER_RANGE = "Cannot read slider range. Outlook's UI may have changed."
 local MSG_SLIDER_SET = "Could not move the font size slider. Check Accessibility permissions."
+local MSG_AT_MAX = "Text is already at the largest size."
+local MSG_AT_MIN = "Text is already at the smallest size."
 local MSG_NO_GENERAL = "'General' tile not found in settings. Outlook's UI may have changed."
 local MSG_NO_BUTTONS = "Size buttons not found in settings. Outlook's UI may have changed."
 local MSG_BUTTON_PRESS = "Could not click the size button. Outlook's UI may have changed."
 
 function M.find_app(deps, cfg)
-    if not deps.application then
-        return nil
-    end
-
     -- 1) Try by bundle ID (most robust)
     local app = deps.application.get(BUNDLE_ID)
     if app then
@@ -44,10 +36,6 @@ function M.find_app(deps, cfg)
 end
 
 function M.ax_app(deps, app)
-    if not deps.axuielement then
-        return nil
-    end
-
     local pid = app and app.pid and app:pid() or nil
     if not pid then
         return nil
@@ -68,41 +56,19 @@ local function get_windows(ax_app)
     return {}
 end
 
--- Stable identifier for an AX window: AXWindowID, else AXTitle + AXPosition.
-local function get_window_id(w)
-    local wid = w:attributeValue("AXWindowID")
-    if wid then
-        return wid
-    end
-    local title = w:attributeValue("AXTitle") or ""
-    local pos = w:attributeValue("AXPosition") or { x = 0, y = 0 }
-    return title .. ":" .. tostring(pos.x) .. "," .. tostring(pos.y)
-end
-
--- Returns the valid, visible windows in current_windows that are not in prev_windows.
+-- Returns the windows in current_windows that are not in prev_windows (AX elements compare with ==).
 local function find_new_windows(prev_windows, current_windows)
-    local prev = {}
-    for _, w in ipairs(prev_windows or {}) do
-        local ok, wid = pcall(get_window_id, w)
-        if ok then
-            prev[wid] = true
-        end
-    end
     local found = {}
     for _, w in ipairs(current_windows or {}) do
-        local ok_id, wid = pcall(get_window_id, w)
-        if ok_id and not prev[wid] then
-            local ok_attrs, role, hidden = pcall(function()
-                return w:attributeValue("AXRole"), w:attributeValue("AXHidden")
-            end)
-            if ok_attrs and (role == "AXWindow" or role == "AXSheet" or role == "AXDialog") and not hidden then
-                local ok_valid = pcall(function()
-                    return w:attributeValue("AXTitle") ~= nil or w:attributeValue("AXChildren") ~= nil
-                end)
-                if ok_valid then
-                    table.insert(found, w)
-                end
+        local known = false
+        for _, p in ipairs(prev_windows or {}) do
+            if w == p then
+                known = true
+                break
             end
+        end
+        if not known then
+            table.insert(found, w)
         end
     end
     return found
@@ -113,7 +79,7 @@ local function has_any_text(win, labels)
 end
 
 -- True if window looks like Settings/Preferences: slider, personal-settings header, or size label.
--- One tree walk: this also runs over Outlook's (large) main window on every attempt.
+-- One tree walk per candidate; only windows that appeared after opening Settings are checked.
 local function looks_like_settings(win, cfg)
     if not win then
         return false
@@ -125,8 +91,8 @@ local function looks_like_settings(win, cfg)
     return ax.find_role_or_static_text(win, "AXSlider", labels) ~= nil
 end
 
--- hs.axuielement's performAction returns the element if the action was accepted,
--- false if it was rejected, and nil + error on an accessibility error.
+-- hs.axuielement's performAction returns the element on success, false on
+-- kAXErrorCannotComplete (which includes timeouts), and nil + error otherwise.
 local function press(elem)
     if not elem then
         return false
@@ -137,38 +103,46 @@ local function press(elem)
     return ok and result ~= nil and result ~= false
 end
 
-local function close_window(deps, cfg)
-    local ks = cfg.closeWindowKeystroke
-    deps.eventtap.keyStroke(ks.mods, ks.key)
+-- Closes `win` itself; a keystroke would hit whatever window has focus, even in another app.
+local function close_window(deps, app, win)
+    local btn = win:attributeValue("AXCloseButton")
+    if btn and btn:performAction("AXPress") then
+        return
+    end
+    local ax_app = M.ax_app(deps, app)
+    if ax_app and ax_app:attributeValue("AXFocusedWindow") == win then
+        deps.eventtap.keyStroke({ "cmd" }, "w", nil, app)
+    end
 end
 
--- Performs ONE attempt and calls cb(ok, err, retryable) exactly once.
+-- Performs ONE attempt and calls cb(ok, err, retryable, at_limit) exactly once.
+-- at_limit is true when the size control was already at its limit (nothing changed).
 function M.attempt(deps, cfg, app, isPlus, cb)
     local finished = false
     local win = nil
     local mutated = false
 
-    local function finish(ok, err, retryable)
+    local function finish(ok, err, retryable, at_limit)
         if finished then
             return
         end
         finished = true
-        cb(ok, err, retryable)
+        cb(ok, err, retryable, at_limit)
     end
 
     -- Closes the settings window (only once one was found); never throws.
     local function close()
         if win then
-            pcall(close_window, deps, cfg)
+            pcall(close_window, deps, app, win)
         end
     end
 
-    local function fail(err, retryable)
+    local function fail(err, retryable, at_limit)
         if finished then
             return
         end
         close()
-        finish(false, tostring(err), (retryable and not mutated) or false)
+        finish(false, tostring(err), (retryable and not mutated) or false, at_limit or false)
     end
 
     local function succeed()
@@ -241,10 +215,14 @@ function M.attempt(deps, cfg, app, isPlus, cb)
         end
         -- Legacy Outlook slider uses integer steps (Standard/Large/Larger)
         local newv = isPlus and math.min(val + 1, maxv) or math.max(val - 1, minv)
+        if newv == val then
+            fail(isPlus and MSG_AT_MAX or MSG_AT_MIN, false, true)
+            return
+        end
+        mutated = true
         if not slider:setAttributeValue("AXValue", newv) then
             error(MSG_SLIDER_SET, 0)
         end
-        mutated = true
         succeed()
     end
 
@@ -257,17 +235,18 @@ function M.attempt(deps, cfg, app, isPlus, cb)
         if not btn then
             btn = isPlus and buttons[#buttons] or buttons[1]
         end
+        if btn:attributeValue("AXEnabled") == false then
+            -- A disabled size button means the text is already at that limit.
+            fail(isPlus and MSG_AT_MAX or MSG_AT_MIN, false, true)
+            return
+        end
+        -- Once pressed, never retry: false (kAXErrorCannotComplete, e.g. a timeout) or an error
+        -- does not prove the press failed, and a retry could change the size twice.
+        mutated = true
         local ok, result = pcall(function()
             return btn:performAction("AXPress")
         end)
-        if ok and result == false then
-            -- Rejected: the size did not change, so a retry is safe.
-            error(MSG_BUTTON_PRESS, 0)
-        end
-        -- Accepted, or an accessibility error after which the press may still have
-        -- landed: never retry from here on.
-        mutated = true
-        if not ok or result == nil then
+        if not ok or not result then
             error(MSG_BUTTON_PRESS, 0)
         end
         succeed()
@@ -344,38 +323,17 @@ function M.attempt(deps, cfg, app, isPlus, cb)
             return
         end
 
-        -- Reuse an already open settings window (ignores cfg.mode)
         local before = get_windows(ax_app)
-        for _, w in ipairs(before) do
-            if looks_like_settings(w, cfg) then
-                win = w
-                run_step(ax.find_first_by_role(w, "AXSlider") ~= nil)
-                return
-            end
-        end
 
-        local menu_legacy
-        local menu_error = MSG_MENU_AUTO
-        if cfg.mode == "new" then
-            if try_select_menu(cfg.settingsMenu) then
-                menu_legacy = false
-            else
-                menu_error = MSG_MENU_NEW
-            end
-        elseif cfg.mode == "legacy" then
-            if try_select_menu(cfg.preferencesMenu) then
-                menu_legacy = true
-            else
-                menu_error = MSG_MENU_LEGACY
-            end
-        elseif try_select_menu(cfg.settingsMenu) then
-            menu_legacy = false
+        -- The menu that opened the window tells New from Legacy. Translated menus match neither
+        -- name; then ⌘, (the same key in every language) opens settings and a slider means Legacy.
+        local legacy
+        if try_select_menu(cfg.settingsMenu) then
+            legacy = false
         elseif try_select_menu(cfg.preferencesMenu) then
-            menu_legacy = true
-        end
-        if menu_legacy == nil then
-            fail(menu_error, true)
-            return
+            legacy = true
+        else
+            deps.eventtap.keyStroke({ "cmd" }, ",", nil, app)
         end
 
         local candidate
@@ -389,7 +347,10 @@ function M.attempt(deps, cfg, app, isPlus, cb)
             return false
         end, function()
             win = candidate
-            run_step(menu_legacy)
+            if legacy == nil then
+                legacy = ax.find_first_by_role(win, "AXSlider") ~= nil
+            end
+            run_step(legacy)
         end, function()
             fail(MSG_WINDOW_TIMEOUT, false)
         end)

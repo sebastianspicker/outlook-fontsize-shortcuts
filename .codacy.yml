@@ -1,0 +1,5 @@
+---
+# Codacy reads this once the repository is added there. Tools (Luacheck, Lizard) are enabled in the Codacy UI.
+# The tests use fake Hammerspoon globals and stub io.open on purpose; keep them out of analysis.
+exclude_paths:
+  - "test/**"
